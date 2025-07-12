@@ -1,7 +1,7 @@
 # MECM to Intune Application Migration Tool
 
 A comprehensive PowerShell tool with GUI for migrating applications from Microsoft Endpoint Configuration Manager (MECM/SCCM) to Microsoft Intune. This tool automates the complex process of analyzing MECM applications, validating their migratability, and packaging them for deployment through Intune.
-
+![alt text](image.png)
 ## 🚀 Features
 
 - **GUI-Based Interface**: User-friendly Windows Forms interface for easy operation

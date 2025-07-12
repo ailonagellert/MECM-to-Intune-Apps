@@ -368,6 +368,9 @@ function Get-SCCMApplicationByName {
     } catch {
         Write-Log -Message "Error searching for SCCM application: $($_.Exception.Message)" -Level "ERROR"
         return $null
+    } finally {
+        # Switch back to C: drive after MECM operations
+        Set-Location C:
     }
 }
 
@@ -376,26 +379,32 @@ function Test-SCCMAppMigratability {
     
     Write-Log -Message "Validating application for migration..." -Level "INFO"
     Set-Location "$($MECMSiteCode):"
-    $sccmappdetails = Get-CMApplication -name $SCCMApp
     
-    $ParsedData = ConvertFrom-SDMPackageXML -XMLContent $sccmappdetails.SDMPackageXML -AppName $sccmappdetails.LocalizedDisplayName
-    
-    if (-not $ParsedData) {
-        return @{
-            IsMigratable = $false
-            Reason = "No deployment type data found"
-            MigrationType = "Unknown"
-            ParsedData = $null
+    try {
+        $sccmappdetails = Get-CMApplication -name $SCCMApp
+        
+        $ParsedData = ConvertFrom-SDMPackageXML -XMLContent $sccmappdetails.SDMPackageXML -AppName $sccmappdetails.LocalizedDisplayName
+        
+        if (-not $ParsedData) {
+            return @{
+                IsMigratable = $false
+                Reason = "No deployment type data found"
+                MigrationType = "Unknown"
+                ParsedData = $null
+            }
         }
-    }
-    
-    $IsMigratable, $Reason, $MigrationType = Test-AppMigratability -ParsedData $ParsedData -AppName $sccmappdetails.LocalizedDisplayName
-    
-    return @{
-        IsMigratable = $IsMigratable
-        Reason = $Reason
-        MigrationType = $MigrationType
-        ParsedData = $ParsedData
+        
+        $IsMigratable, $Reason, $MigrationType = Test-AppMigratability -ParsedData $ParsedData -AppName $sccmappdetails.LocalizedDisplayName
+        
+        return @{
+            IsMigratable = $IsMigratable
+            Reason = $Reason
+            MigrationType = $MigrationType
+            ParsedData = $ParsedData
+        }
+    } finally {
+        # Switch back to C: drive after MECM operations
+        Set-Location C:
     }
 }
 
@@ -2552,7 +2561,7 @@ function Show-MigrationGUI {
     $cmbPublisher.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
     
     Set-Location c:
-    $publishers = Get-ChildItem -Path $BaseAppPath | Where-Object { $_.PSIsContainer -and $_.Name -ne "_Template_Publisher" } | Sort-Object Name
+    $publishers = Get-ChildItem -Path $Config.BaseAppPath | Where-Object { $_.PSIsContainer -and $_.Name -ne "_Template_Publisher" } | Sort-Object Name
     foreach ($pub in $publishers) {
         $cmbPublisher.Items.Add($pub.Name) | Out-Null
     }
@@ -3280,7 +3289,7 @@ function Show-MigrationGUI {
             $txtNewPublisher.Visible = $true
         } else {
             $txtNewPublisher.Visible = $false
-            $publisherPath = Join-Path -Path $BaseAppPath -ChildPath $cmbPublisher.SelectedItem 
+            $publisherPath = Join-Path -Path $Config.BaseAppPath -ChildPath $cmbPublisher.SelectedItem 
 
             $apps = Get-ChildItem -Path $publisherPath -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer } -ErrorAction SilentlyContinue | Sort-Object Name
             foreach ($app in $apps) {
@@ -3317,7 +3326,21 @@ function Show-MigrationGUI {
             [System.Windows.Forms.MessageBox]::Show("Please select an application.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
             return
         }        
-        $script:SelectedApp = $deployedApps | Where-Object { $_.AppName -eq $appListView.SelectedRows[0].Cells[1].Value -and $_.Version -eq $appListView.SelectedRows[0].Cells[2].Value } | Select-Object -First 1
+        
+        # Fix: Get the selected app correctly with proper SCCMApp object
+        $selectedRow = $appListView.SelectedRows[0]
+        $selectedAppName = $selectedRow.Cells[1].Value
+        $selectedVersion = $selectedRow.Cells[2].Value
+        
+        # Find the matching app from the global deployedApps array
+        $script:SelectedApp = $global:deployedApps | Where-Object { 
+            $_.AppName -eq $selectedAppName -and $_.Version -eq $selectedVersion 
+        } | Select-Object -First 1
+        
+        if (-not $script:SelectedApp) {
+            [System.Windows.Forms.MessageBox]::Show("Could not find the selected application in the loaded data.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+            return
+        }
         Add-ColoredLogEntry "Selected application: $($script:SelectedApp.AppName) v$($script:SelectedApp.Version)" ([System.Drawing.Color]::Blue)
         
         # Auto-populate destination fields based on selected app
@@ -3375,6 +3398,7 @@ function Show-MigrationGUI {
     })
 
     $btnSelectDestination.Add_Click({
+        # Validate input fields first
         if ($cmbPublisher.SelectedItem -eq "➕ Create New Publisher" -and [string]::IsNullOrWhiteSpace($txtNewPublisher.Text)) {
             [System.Windows.Forms.MessageBox]::Show("Please enter a new publisher name.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
             return
@@ -3387,38 +3411,80 @@ function Show-MigrationGUI {
             [System.Windows.Forms.MessageBox]::Show("Please enter a version number.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
             return
         }
+        
+        # Validate BaseAppPath exists
+        if (-not $Config.BaseAppPath -or -not (Test-Path $Config.BaseAppPath)) {
+            [System.Windows.Forms.MessageBox]::Show("BaseAppPath is not configured or does not exist: $($Config.BaseAppPath)", "Configuration Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+            return
+        }
 
         # Create publisher object with proper FullName
+        Add-ColoredLogEntry "Publisher selection: $($cmbPublisher.SelectedItem)" ([System.Drawing.Color]::Gray)
+        
         if ($cmbPublisher.SelectedItem -eq "➕ Create New Publisher") {
             $publisherName = $txtNewPublisher.Text.Trim()
-            $publisherPath = Join-Path -Path $BaseAppPath -ChildPath $publisherName
+            if ([string]::IsNullOrWhiteSpace($publisherName)) {
+                Add-ColoredLogEntry "❌ Publisher name is empty" ([System.Drawing.Color]::Red)
+                [System.Windows.Forms.MessageBox]::Show("Publisher name cannot be empty.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+                return
+            }
+            
+            $publisherPath = Join-Path -Path $Config.BaseAppPath -ChildPath $publisherName
+            Add-ColoredLogEntry "Creating new publisher: $publisherName at $publisherPath" ([System.Drawing.Color]::Blue)
+            
             $script:SelectedPublisher = [PSCustomObject]@{
                 Name = $publisherName
                 FullName = $publisherPath
             }
+            
+            Add-ColoredLogEntry "Publisher object created with FullName: $($script:SelectedPublisher.FullName)" ([System.Drawing.Color]::Gray)
+            
             # Create publisher directory if it doesn't exist
             if (-not (Test-Path $publisherPath)) {
                 try {
                     New-Item -Path $publisherPath -ItemType Directory -Force | Out-Null
-                    Add-ColoredLogEntry "Created new publisher directory: $publisherPath" ([System.Drawing.Color]::Green)
+                    Add-ColoredLogEntry "✓ Created new publisher directory: $publisherPath" ([System.Drawing.Color]::Green)
                 } catch {
+                    Add-ColoredLogEntry "❌ Failed to create publisher directory: $($_.Exception.Message)" ([System.Drawing.Color]::Red)
                     [System.Windows.Forms.MessageBox]::Show("Failed to create publisher directory: $($_.Exception.Message)", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
                     return
                 }
+            } else {
+                Add-ColoredLogEntry "✓ Publisher directory already exists: $publisherPath" ([System.Drawing.Color]::Green)
             }
         } else {
             $selectedPublisherName = $cmbPublisher.SelectedItem
-            $publisherPath = Join-Path -Path $BaseAppPath -ChildPath $selectedPublisherName
+            if ([string]::IsNullOrWhiteSpace($selectedPublisherName)) {
+                Add-ColoredLogEntry "❌ Selected publisher name is empty" ([System.Drawing.Color]::Red)
+                [System.Windows.Forms.MessageBox]::Show("No publisher selected.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+                return
+            }
+            
+            $publisherPath = Join-Path -Path $Config.BaseAppPath -ChildPath $selectedPublisherName
+            Add-ColoredLogEntry "Using existing publisher: $selectedPublisherName at $publisherPath" ([System.Drawing.Color]::Blue)
+            
             $script:SelectedPublisher = [PSCustomObject]@{
                 Name = $selectedPublisherName
                 FullName = $publisherPath
             }
+            
+            Add-ColoredLogEntry "Publisher object created with FullName: $($script:SelectedPublisher.FullName)" ([System.Drawing.Color]::Gray)
         }
 
         # Create application object with proper FullName
         if ($cmbApplication.SelectedItem -eq "➕ Create New Application") {
             $appName = $txtNewApplication.Text.Trim()
+            
+            # Validate that publisher was created successfully before proceeding
+            if (-not $script:SelectedPublisher -or -not $script:SelectedPublisher.FullName) {
+                Add-ColoredLogEntry "❌ Publisher object is null or invalid" ([System.Drawing.Color]::Red)
+                [System.Windows.Forms.MessageBox]::Show("Publisher configuration failed. Please try again.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+                return
+            }
+            
             $appPath = Join-Path -Path $script:SelectedPublisher.FullName -ChildPath $appName
+            Add-ColoredLogEntry "Creating new application: $appName at $appPath" ([System.Drawing.Color]::Blue)
+            
             $script:SelectedApplication = [PSCustomObject]@{
                 Name = $appName
                 FullName = $appPath
@@ -3427,15 +3493,28 @@ function Show-MigrationGUI {
             if (-not (Test-Path $appPath)) {
                 try {
                     New-Item -Path $appPath -ItemType Directory -Force | Out-Null
-                    Add-ColoredLogEntry "Created new application directory: $appPath" ([System.Drawing.Color]::Green)
+                    Add-ColoredLogEntry "✓ Created new application directory: $appPath" ([System.Drawing.Color]::Green)
                 } catch {
+                    Add-ColoredLogEntry "❌ Failed to create application directory: $($_.Exception.Message)" ([System.Drawing.Color]::Red)
                     [System.Windows.Forms.MessageBox]::Show("Failed to create application directory: $($_.Exception.Message)", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
                     return
                 }
+            } else {
+                Add-ColoredLogEntry "✓ Application directory already exists: $appPath" ([System.Drawing.Color]::Green)
             }
         } else {
             $selectedAppName = $cmbApplication.SelectedItem
+            
+            # Validate that publisher was created successfully before proceeding
+            if (-not $script:SelectedPublisher -or -not $script:SelectedPublisher.FullName) {
+                Add-ColoredLogEntry "❌ Publisher object is null or invalid" ([System.Drawing.Color]::Red)
+                [System.Windows.Forms.MessageBox]::Show("Publisher configuration failed. Please try again.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+                return
+            }
+            
             $appPath = Join-Path -Path $script:SelectedPublisher.FullName -ChildPath $selectedAppName
+            Add-ColoredLogEntry "Using existing application: $selectedAppName at $appPath" ([System.Drawing.Color]::Blue)
+            
             $script:SelectedApplication = [PSCustomObject]@{
                 Name = $selectedAppName
                 FullName = $appPath
@@ -3477,6 +3556,7 @@ function Show-MigrationGUI {
         Add-ColoredLogEntry "🚀 Starting migration for $($script:SelectedApp.AppName)..." ([System.Drawing.Color]::Blue)
         
         Update-ProgressWithMessage 10 "Validating application compatibility..."
+        # Fix: Use the AppName for validation, but keep SCCMApp object for other operations
         $migrationInfo = Test-SCCMAppMigratability -SCCMApp $script:SelectedApp.AppName
         Show-SCCMAppDetails -SCCMApp $script:SelectedApp.SCCMApp -MigrationInfo $migrationInfo
         
@@ -4067,6 +4147,9 @@ function Show-MigrationGUI {
             $appsStatusLabel.Text = "Error loading applications: $_"
             $appsStatusLabel.ForeColor = [System.Drawing.Color]::Red
         } finally {
+            # Switch back to C: drive after MECM operations
+            Set-Location C:
+            
             # Restore button state
             $btnGetApps.Text = $originalButtonText
             $btnGetApps.Enabled = $true
