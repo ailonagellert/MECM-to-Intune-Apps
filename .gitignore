@@ -1,0 +1,82 @@
+# Log files
+*.log
+*.txt
+
+# PowerShell
+*.ps1xml
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+
+# Configuration files with sensitive data
+config.json
+*.config
+.env
+.env.local
+
+# IDE files
+.vscode/
+.vs/
+*.code-workspace
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Build artifacts
+build/
+dist/
+*.exe
+*.msi
+*.zip
+
+# Test results
+TestResults/
+*.trx
+*.coverage
+
+# IntuneWin packages
+*.intunewin
+
+# Package directories
+packages/
+packages-cache/
+
+# Output directories
+output/
+Output/
+out/
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Credentials and secrets
+secrets.json
+credentials.json
+*.pfx
+*.p12
+*.key
+*.pem
+
+# Application specific
+Applications/
+Sourcefiles/
+intunewin/
+
+# User-specific files
+*.user
+*.suo
+
+# Local environment
+local.settings.json

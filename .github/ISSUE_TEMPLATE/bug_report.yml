@@ -1,0 +1,127 @@
+name: 'Bug Report'
+description: 'File a bug report to help us improve'
+title: '[Bug]: '
+labels: ['bug', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report! Please provide as much detail as possible.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of what the bug is.
+      placeholder: Tell us what you see!
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. Enter value '...'
+        4. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected Behavior
+      description: A clear and concise description of what you expected to happen.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      description: What operating system are you running?
+      options:
+        - Windows 10
+        - Windows 11
+        - Windows Server 2016
+        - Windows Server 2019
+        - Windows Server 2022
+        - Other (specify in additional context)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: powershell-version
+    attributes:
+      label: PowerShell Version
+      description: What version of PowerShell are you using?
+      options:
+        - PowerShell 5.1
+        - PowerShell 7.0
+        - PowerShell 7.1
+        - PowerShell 7.2
+        - PowerShell 7.3
+        - Other (specify in additional context)
+    validations:
+      required: true
+
+  - type: input
+    id: sccm-version
+    attributes:
+      label: SCCM Version
+      description: What version of SCCM are you using?
+      placeholder: e.g., 2103, 2107, Current Branch
+    validations:
+      required: true
+
+  - type: input
+    id: tool-version
+    attributes:
+      label: Tool Version
+      description: What version of the migration tool are you using?
+      placeholder: e.g., 1.0.0, commit hash, latest
+    validations:
+      required: true
+
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Interface Used
+      description: How are you running the tool?
+      options:
+        - GUI Interface
+        - Command Line
+        - Both
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Log Output
+      description: Please copy and paste any relevant log output. This will be automatically formatted into code, so no need for backticks.
+      render: shell
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here, including configuration details (with sensitive info masked).
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Pre-submission Checklist
+      description: Please confirm the following
+      options:
+        - label: I have searched existing issues to ensure this is not a duplicate
+          required: true
+        - label: I have included relevant environment information
+          required: true
+        - label: I have provided steps to reproduce the issue
+          required: true
+        - label: I have masked any sensitive information in logs or screenshots
+          required: true

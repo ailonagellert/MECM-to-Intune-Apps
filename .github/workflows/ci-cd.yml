@@ -1,0 +1,255 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  POWERSHELL_CORE_VERSION: '7.2'
+
+jobs:
+  code-quality:
+    runs-on: windows-latest
+    name: Code Quality Analysis
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Setup PowerShell
+      uses: microsoft/setup-powershell@v1
+      with:
+        pwsh: true
+        
+    - name: Install PSScriptAnalyzer
+      shell: pwsh
+      run: |
+        Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
+        
+    - name: Run Script Analyzer
+      shell: pwsh
+      run: |
+        $results = Invoke-ScriptAnalyzer -Path "Scripts/" -Recurse -ReportSummary
+        if ($results) {
+          $results | Format-Table
+          Write-Error "Script analysis found issues"
+          exit 1
+        }
+        Write-Host "✅ Script analysis passed"
+        
+    - name: Check for secrets
+      shell: pwsh
+      run: |
+        $patterns = @(
+          "ClientSecret.*=.*[^example]",
+          "TenantId.*=.*[^12345678-1234-1234-1234-123456789012]",
+          "password.*=",
+          "secret.*=.*[^your-]"
+        )
+        
+        $foundSecrets = $false
+        Get-ChildItem -Path . -Recurse -Include "*.ps1", "*.json", "*.md" | ForEach-Object {
+          $content = Get-Content $_.FullName -Raw
+          foreach ($pattern in $patterns) {
+            if ($content -match $pattern) {
+              Write-Warning "Potential secret found in $($_.Name): $($matches[0])"
+              $foundSecrets = $true
+            }
+          }
+        }
+        
+        if ($foundSecrets) {
+          Write-Error "❌ Potential secrets detected"
+          exit 1
+        }
+        Write-Host "✅ No secrets detected"
+
+  documentation:
+    runs-on: ubuntu-latest
+    name: Documentation Check
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Check README
+      run: |
+        if [ ! -f "README.md" ]; then
+          echo "❌ README.md not found"
+          exit 1
+        fi
+        
+        # Check for required sections
+        required_sections=("Features" "Prerequisites" "Installation" "Usage" "Contributing")
+        for section in "${required_sections[@]}"; do
+          if ! grep -q "## .*$section" README.md; then
+            echo "❌ Required section missing in README: $section"
+            exit 1
+          fi
+        done
+        echo "✅ README.md validation passed"
+        
+    - name: Check for broken links
+      uses: gaurav-nelson/github-action-markdown-link-check@v1
+      with:
+        use-quiet-mode: 'yes'
+        use-verbose-mode: 'yes'
+        config-file: '.github/markdown-link-config.json'
+
+  security:
+    runs-on: windows-latest
+    name: Security Scan
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Run security analysis
+      shell: pwsh
+      run: |
+        # Check for potentially dangerous PowerShell commands
+        $dangerousCommands = @(
+          'Invoke-Expression',
+          'iex ',
+          'Invoke-Command.*-ComputerName',
+          'Enter-PSSession',
+          'Remove-Item.*-Recurse.*-Force',
+          'Format-Volume',
+          'Clear-Host.*rm.*rf'
+        )
+        
+        $issues = @()
+        Get-ChildItem -Path Scripts/ -Filter "*.ps1" -Recurse | ForEach-Object {
+          $content = Get-Content $_.FullName -Raw
+          foreach ($cmd in $dangerousCommands) {
+            if ($content -match $cmd) {
+              $issues += "Potentially dangerous command in $($_.Name): $cmd"
+            }
+          }
+        }
+        
+        if ($issues.Count -gt 0) {
+          Write-Warning "Security issues found:"
+          $issues | ForEach-Object { Write-Warning $_ }
+          Write-Host "Please review these findings manually"
+        } else {
+          Write-Host "✅ No obvious security issues detected"
+        }
+
+  compatibility:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        powershell-version: ['5.1', '7.2']
+    name: PowerShell ${{ matrix.powershell-version }} Compatibility
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Setup PowerShell Core
+      if: matrix.powershell-version == '7.2'
+      uses: microsoft/setup-powershell@v1
+      with:
+        pwsh: true
+        
+    - name: Test PowerShell syntax
+      shell: pwsh
+      run: |
+        Get-ChildItem -Path Scripts/ -Filter "*.ps1" -Recurse | ForEach-Object {
+          Write-Host "Checking syntax: $($_.Name)"
+          $errors = $null
+          $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content $_.FullName -Raw), [ref]$errors)
+          if ($errors) {
+            Write-Error "Syntax errors in $($_.Name):"
+            $errors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
+        }
+        Write-Host "✅ All scripts have valid PowerShell syntax"
+
+  build:
+    runs-on: windows-latest
+    name: Build and Package
+    needs: [code-quality, documentation, security, compatibility]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Setup PowerShell
+      uses: microsoft/setup-powershell@v1
+      with:
+        pwsh: true
+        
+    - name: Create release package
+      shell: pwsh
+      run: |
+        $version = "1.0.0"  # This could be dynamic based on tags
+        $packageName = "SCCM-to-Intune-Migrator-v$version"
+        
+        # Create package directory
+        New-Item -Path $packageName -ItemType Directory -Force
+        
+        # Copy main files
+        Copy-Item -Path "Scripts/" -Destination "$packageName/" -Recurse
+        Copy-Item -Path "docs/" -Destination "$packageName/" -Recurse
+        Copy-Item -Path "examples/" -Destination "$packageName/" -Recurse
+        Copy-Item -Path "README.md" -Destination "$packageName/"
+        Copy-Item -Path "LICENSE" -Destination "$packageName/"
+        Copy-Item -Path "CHANGELOG.md" -Destination "$packageName/"
+        
+        # Create ZIP package
+        Compress-Archive -Path $packageName -DestinationPath "$packageName.zip"
+        
+        Write-Host "✅ Package created: $packageName.zip"
+        
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: migration-tool-package
+        path: "*.zip"
+
+  release:
+    runs-on: windows-latest
+    name: Create Release
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Download build artifact
+      uses: actions/download-artifact@v3
+      with:
+        name: migration-tool-package
+        
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref_name }}
+        release_name: Release ${{ github.ref_name }}
+        body: |
+          ## Changes in this Release
+          
+          See [CHANGELOG.md](CHANGELOG.md) for detailed changes.
+          
+          ## Installation
+          
+          1. Download the ZIP file
+          2. Extract to your desired location
+          3. Follow the [Installation Guide](docs/installation-guide.md)
+          
+          ## What's New
+          
+          - Bug fixes and improvements
+          - Enhanced error handling
+          - Updated documentation
+        draft: false
+        prerelease: false

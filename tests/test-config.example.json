@@ -1,0 +1,28 @@
+{
+    "_comment": "Sample Test Configuration",
+    "TestSCCMServer": "test-sccm.domain.local",
+    "TestSCCMSiteCode": "TST",
+    "TestTenantId": "12345678-1234-1234-1234-123456789012",
+    "TestClientId": "87654321-4321-4321-4321-210987654321",
+    "TestClientSecret": "test-client-secret",
+    "TestApplicationName": "Adobe Reader DC",
+    "TestSourcePath": "\\\\test-server\\test-sources",
+    "TestOutputPath": "C:\\Temp\\IntuneTests",
+    "TestApplications": [
+        {
+            "Name": "Adobe Reader DC",
+            "Type": "MSI",
+            "ExpectedMigratable": true
+        },
+        {
+            "Name": "Google Chrome",
+            "Type": "EXE", 
+            "ExpectedMigratable": true
+        },
+        {
+            "Name": "Custom Script App",
+            "Type": "Script",
+            "ExpectedMigratable": false
+        }
+    ]
+}
